@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OTA PNR Reconciliation</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg:#12161c; --panel:#1a2028; --panel-raised:#1f2630; --border:#2b3340;
+    --text:#e9edf2; --text-muted:#8b96a5; --text-faint:#5a6472;
+    --accent:#f5a623; --accent2:#2dd4bf; --danger:#ef5350;
+    --font-sans:'IBM Plex Sans','Segoe UI',sans-serif;
+    --font-mono:'IBM Plex Mono','SFMono-Regular',Menlo,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans);}
+  .wrap{max-width:980px;margin:0 auto;padding:36px 28px 60px;}
+  .title-row{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex-shrink:0;}
+  h1{font-size:22px;font-weight:700;letter-spacing:-0.01em;margin:0;}
+  .subtag{font-family:var(--font-mono);font-size:12px;color:var(--text-faint);}
+  .intro{color:var(--text-muted);font-size:13.5px;line-height:1.6;max-width:660px;margin:0 0 32px;}
+  code{font-family:var(--font-mono);}
+
+  .pipeline{position:relative;margin-bottom:20px;}
+  .pipeline-line{position:absolute;top:17px;left:12.5%;right:12.5%;height:2px;background:var(--border);z-index:0;}
+  .pipeline-row{display:flex;gap:16px;position:relative;z-index:1;}
+
+  .stop{display:flex;flex-direction:column;align-items:center;flex:1;min-width:0;}
+  .marker{width:34px;height:34px;border-radius:50%;border:2px solid var(--border);background:var(--panel);
+    display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:13px;
+    color:var(--text-muted);font-weight:700;margin-bottom:14px;flex-shrink:0;transition:all .2s ease;}
+  .marker.done{border-color:var(--accent2);background:var(--accent2);color:#08211d;}
+  .marker.err{border-color:var(--danger);}
+
+  .dropzone{width:100%;border:1.5px dashed var(--border);border-radius:10px;background:var(--panel);
+    padding:18px 16px;cursor:pointer;text-align:center;transition:all .15s ease;}
+  .dropzone.drag{border-color:var(--accent);background:rgba(245,166,35,0.06);}
+  .dropzone.err{border-color:var(--danger);}
+  .dz-icon{margin-bottom:8px;font-size:20px;line-height:1;}
+  .dz-label{font-size:13.5px;font-weight:600;color:var(--text);}
+  .dz-hint{font-size:12px;color:var(--text-muted);margin-top:3px;}
+  .dz-file{margin-top:12px;font-family:var(--font-mono);font-size:11.5px;color:var(--text-muted);
+    word-break:break-all;line-height:1.5;display:none;}
+  .dz-meta{color:var(--accent2);margin-top:2px;}
+  .dz-error{margin-top:4px;color:var(--danger);}
+  .requires{margin-top:8px;font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint);text-align:center;}
+
+  .actions{display:flex;justify-content:center;gap:10px;margin-top:30px;margin-bottom:8px;}
+  button{font-family:var(--font-sans);cursor:pointer;border:none;}
+  .btn-primary{display:flex;align-items:center;gap:8px;padding:11px 22px;border-radius:8px;
+    background:var(--panel-raised);color:var(--text-faint);font-weight:600;font-size:14px;cursor:not-allowed;transition:all .15s ease;}
+  .btn-primary.ready{background:var(--accent);color:#241705;cursor:pointer;}
+  .btn-ghost{display:flex;align-items:center;gap:6px;padding:11px 16px;border-radius:8px;border:1px solid var(--border);
+    background:transparent;color:var(--text-muted);font-weight:500;font-size:13px;display:none;}
+  .run-error{text-align:center;color:var(--danger);font-size:13px;margin-top:12px;display:none;align-items:center;gap:6px;justify-content:center;}
+
+  .section{margin-top:40px;display:none;}
+  .section.show{display:block;}
+  .section-head{display:flex;align-items:center;gap:8px;margin-bottom:16px;}
+  .section-head h2{font-size:15px;font-weight:700;margin:0;letter-spacing:-0.01em;}
+  .stat-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:28px;}
+  .stat{padding:14px 16px;background:var(--panel);border:1px solid var(--border);border-radius:10px;min-width:128px;}
+  .stat-value{font-family:var(--font-mono);font-size:22px;font-weight:700;letter-spacing:-0.02em;}
+  .stat-label{font-size:11.5px;color:var(--text-muted);margin-top:4px;text-transform:uppercase;letter-spacing:.04em;}
+
+  .cards{display:flex;gap:16px;flex-wrap:wrap;}
+  .card{flex:1 1 320px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px;}
+  .card-head{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+  .card-title{font-weight:600;font-size:13.5px;}
+  .card-desc{color:var(--text-muted);font-size:12.5px;line-height:1.55;margin:0 0 14px;}
+  .dl-btn{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:7px;
+    background:var(--accent);color:#241705;font-weight:600;font-size:13px;}
+  .dl-btn.teal{background:var(--accent2);}
+
+  .swatch{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+  .swatch.amber{background:var(--accent);}
+  .swatch.teal{background:var(--accent2);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="title-row">
+    <span class="dot"></span>
+    <h1>OTA PNR Reconciliation</h1>
+    <span class="subtag">bookings → ratings → source lookup</span>
+  </div>
+  <p class="intro">
+    Upload the booking, rating and NR sheets to run the reconciliation. The target sheet is optional
+    up front — add it whenever you're ready, it's only needed for the trip-level report at the bottom.
+    Everything runs in your browser; no file ever leaves your machine.
+  </p>
+
+  <div class="pipeline">
+    <div class="pipeline-line"></div>
+    <div class="pipeline-row">
+      <div class="stop" id="stop-booking"></div>
+      <div class="stop" id="stop-rating"></div>
+      <div class="stop" id="stop-nr"></div>
+      <div class="stop" id="stop-target"></div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn-primary" id="run-btn">Run reconciliation →</button>
+    <button class="btn-ghost" id="reset-btn">↺ Reset</button>
+  </div>
+  <div class="run-error" id="run-error"></div>
+
+  <!-- results -->
+  <div class="section" id="results-section">
+    <div class="section-head">
+      <span class="swatch teal"></span>
+      <h2>Results</h2>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><div class="stat-value" id="stat-total" style="color:var(--text-muted)">0</div><div class="stat-label">Total booking rows</div></div>
+      <div class="stat"><div class="stat-value" id="stat-ota">0</div><div class="stat-label">OTA rows (offline removed)</div></div>
+      <div class="stat"><div class="stat-value" id="stat-rated" style="color:var(--danger)">0</div><div class="stat-label">Already rated</div></div>
+      <div class="stat"><div class="stat-value" id="stat-unrated" style="color:var(--accent)">0</div><div class="stat-label">Unrated, carried forward</div></div>
+      <div class="stat"><div class="stat-value" id="stat-final" style="color:var(--accent2)">0</div><div class="stat-label">REDBUS_IN + MMT_IN matches</div></div>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-head"><span class="swatch amber"></span><span class="card-title">OTA bookings + rating lookup</span></div>
+        <p class="card-desc">Every OTA booking row, with a <code>Rating</code> column added on the right — blank where no rating was found on the rating sheet.</p>
+        <button class="dl-btn" id="download1-btn">⬇ Download (<span id="download1-count">0</span> rows)</button>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="swatch teal"></span><span class="card-title">Unrated, REDBUS_IN / MMT_IN only</span></div>
+        <p class="card-desc">Booking details for unrated OTA PNRs, matched against the NR sheet, with an <code>OrgUnit</code> column added on the right.</p>
+        <button class="dl-btn teal" id="download2-btn">⬇ Download (<span id="download2-count">0</span> rows)</button>
+      </div>
+    </div>
+
+    <!-- trip report -->
+    <div class="section show" style="margin-top:40px;">
+      <div class="section-head">
+        <span class="swatch amber"></span>
+        <h2>Trip-level PNR report</h2>
+      </div>
+      <p class="card-desc" style="max-width:640px;">
+        Groups the REDBUS_IN / MMT_IN result above by trip, counts PNRs per trip (both sources
+        combined), pulls out the service id, and looks up <code>P0July'26</code>, <code>Region</code>
+        and <code>Agent</code> from the target sheet you uploaded above, by matching against
+        <code>SR.ID</code>. Unmatched trips show <code>#N/A</code>.
+      </p>
+      <div class="actions" style="justify-content:flex-start;margin-top:8px;">
+        <button class="btn-primary" id="trip-btn">Generate trip report →</button>
+      </div>
+      <div class="run-error" id="trip-error"></div>
+
+      <div id="trip-results" style="display:none;margin-top:20px;">
+        <div class="stat-row">
+          <div class="stat"><div class="stat-value" id="trip-stat-trips">0</div><div class="stat-label">Distinct trips</div></div>
+          <div class="stat"><div class="stat-value" id="trip-stat-pnr" style="color:var(--accent2)">0</div><div class="stat-label">Total PNRs</div></div>
+          <div class="stat"><div class="stat-value" id="trip-stat-na" style="color:var(--danger)">0</div><div class="stat-label">Unmatched (#N/A)</div></div>
+        </div>
+        <div class="card" style="max-width:420px;">
+          <div class="card-head"><span class="swatch amber"></span><span class="card-title">Trip · Service ID · PNR count · lookup</span></div>
+          <p class="card-desc">One row per trip, sorted by PNR count, descending.</p>
+          <button class="dl-btn" id="trip-download-btn">⬇ Download (<span id="trip-download-count">0</span> rows)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ---------- helpers ----------
+const BOOKING_REQUIRED = ["pnr", "business_source"];
+const RATING_REQUIRED = ["pnr", "rating"];
+const NR_REQUIRED = ["pnr", "orgunit"];
+const TARGET_REQUIRED = ["SR.ID"];
+const ORG_ALLOW = ["REDBUS_IN", "MMT_IN"];
+
+const normHeader = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const normServiceId = (v) => String(v ?? "").trim().replace(/^0+(?=\d)/, "");
+const normPNR = (v) => String(v ?? "").trim().toUpperCase();
+const normVal = (v) => String(v ?? "").trim().toUpperCase();
+// digits-only fallback, for ids that carry a prefix/suffix in one sheet but not the other
+const digitsOnly = (v) => String(v ?? "").replace(/\D/g, "");
+
+function findKey(headers, target) {
+  const t = normHeader(target);
+  return headers.find((h) => normHeader(h) === t);
+}
+
+function readWorkbookRows(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: "array" });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+        resolve({ rows, headers: rows.length ? Object.keys(rows[0]) : [] });
+      } catch (err) { reject(err); }
+    };
+    reader.onerror = () => reject(new Error("Could not read file"));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function downloadRows(rows, filename) {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(rows);
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+  const blob = new Blob([out], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ---------- state ----------
+const stageDefs = {
+  booking: { label: "Booking sheet", hint: "the full export with gds_trip_id, pnr, business_source…", required: BOOKING_REQUIRED, index: "1" },
+  rating:  { label: "Rating sheet", hint: "PNR, Rating, Review and related columns", required: RATING_REQUIRED, index: "2" },
+  nr:      { label: "No-rating (NR) sheet", hint: "PNR, OrgUnit and related columns", required: NR_REQUIRED, index: "3" },
+  target:  { label: "Target sheet", hint: "optional — only used for the trip-level report below", required: TARGET_REQUIRED, index: "4" },
+};
+const state = {
+  booking: { file: null, rows: null, headers: null, meta: null, error: null },
+  rating:  { file: null, rows: null, headers: null, meta: null, error: null },
+  nr:      { file: null, rows: null, headers: null, meta: null, error: null },
+  target:  { file: null, rows: null, headers: null, meta: null, error: null },
+};
+let results = null;
+let tripReport = null;
+
+// ---------- build upload stops ----------
+function buildStop(key) {
+  const def = stageDefs[key];
+  const stop = document.getElementById("stop-" + key);
+  stop.innerHTML = `
+    <div class="marker" id="marker-${key}">${def.index}</div>
+    <div class="dropzone" id="dropzone-${key}">
+      <input type="file" id="file-${key}" accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.ods,.xltx,.xlt" style="display:none" />
+      <div class="dz-icon" id="icon-${key}">⬆</div>
+      <div class="dz-label">${def.label}</div>
+      <div class="dz-hint">${def.hint}</div>
+      <div class="dz-file" id="file-info-${key}"></div>
+    </div>
+    <div class="requires">requires: ${def.required.join(", ")}</div>
+  `;
+  const dz = document.getElementById("dropzone-" + key);
+  const input = document.getElementById("file-" + key);
+  dz.addEventListener("click", () => input.click());
+  dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag"); });
+  dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
+  dz.addEventListener("drop", (e) => {
+    e.preventDefault(); dz.classList.remove("drag");
+    if (e.dataTransfer.files[0]) handleUpload(key, e.dataTransfer.files[0]);
+  });
+  input.addEventListener("change", (e) => {
+    if (e.target.files[0]) handleUpload(key, e.target.files[0]);
+  });
+}
+Object.keys(stageDefs).forEach(buildStop);
+
+// ---------- upload handling ----------
+async function handleUpload(key, file) {
+  if (key !== "target") { results = null; document.getElementById("results-section").classList.remove("show"); }
+  const def = stageDefs[key];
+  const dz = document.getElementById("dropzone-" + key);
+  const marker = document.getElementById("marker-" + key);
+  const fileInfo = document.getElementById("file-info-" + key);
+  const icon = document.getElementById("icon-" + key);
+
+  try {
+    const { rows, headers } = await readWorkbookRows(file);
+    const missing = def.required.filter((r) => !findKey(headers, r));
+    if (missing.length) {
+      state[key] = { file, rows: null, headers, meta: null, error: `Missing column${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}` };
+      renderStop(key);
+      updateRunButton();
+      return;
+    }
+    let uniquePnr = null;
+    const pnrKey = findKey(headers, "pnr");
+    if (pnrKey) uniquePnr = new Set(rows.map((r) => normPNR(r[pnrKey])).filter(Boolean)).size;
+    state[key] = { file, rows, headers, meta: { rows: rows.length, uniquePnr }, error: null };
+    renderStop(key);
+  } catch (err) {
+    state[key] = { file, rows: null, headers: null, meta: null, error: "Could not parse this file. Confirm it's a valid Excel/CSV export." };
+    renderStop(key);
+  }
+  updateRunButton();
+}
+
+function renderStop(key) {
+  const s = state[key];
+  const dz = document.getElementById("dropzone-" + key);
+  const marker = document.getElementById("marker-" + key);
+  const fileInfo = document.getElementById("file-info-" + key);
+  const icon = document.getElementById("icon-" + key);
+
+  dz.classList.toggle("err", !!s.error);
+  marker.classList.toggle("err", !!s.error);
+  marker.classList.toggle("done", !!s.meta && !s.error);
+  marker.innerHTML = (s.meta && !s.error) ? "✓" : stageDefs[key].index;
+  icon.textContent = (s.meta && !s.error) ? "▤" : "⬆";
+
+  fileInfo.style.display = s.file ? "block" : "none";
+  if (s.file) {
+    let html = s.file.name;
+    if (s.meta && !s.error) {
+      html += `<div class="dz-meta">${s.meta.rows.toLocaleString()} rows${s.meta.uniquePnr != null ? " · " + s.meta.uniquePnr.toLocaleString() + " unique PNR" : ""}</div>`;
+    }
+    if (s.error) {
+      html += `<div class="dz-error">⚠ ${s.error}</div>`;
+    }
+    fileInfo.innerHTML = html;
+  }
+}
+
+function updateRunButton() {
+  const allReady = state.booking.rows && !state.booking.error &&
+                    state.rating.rows && !state.rating.error &&
+                    state.nr.rows && !state.nr.error;
+  const btn = document.getElementById("run-btn");
+  btn.classList.toggle("ready", !!allReady);
+  document.getElementById("reset-btn").style.display =
+    (results || Object.values(state).some((s) => s.file)) ? "flex" : "none";
+  updateTripButton();
+  return allReady;
+}
+
+function updateTripButton() {
+  const tripReady = !!results && !!state.target.rows && !state.target.error;
+  document.getElementById("trip-btn").classList.toggle("ready", tripReady);
+}
+
+// ---------- reconciliation ----------
+document.getElementById("run-btn").addEventListener("click", () => {
+  const allReady = updateRunButton();
+  if (!allReady) return;
+  const runErrorEl = document.getElementById("run-error");
+  runErrorEl.style.display = "none";
+  document.getElementById("run-btn").textContent = "Matching…";
+
+  setTimeout(() => {
+    try {
+      const bHeaders = state.booking.headers;
+      const pnrKeyB = findKey(bHeaders, "pnr");
+      const bsKeyB = findKey(bHeaders, "business_source");
+
+      const rHeaders = state.rating.headers;
+      const pnrKeyR = findKey(rHeaders, "pnr");
+      const ratingKeyR = findKey(rHeaders, "rating");
+
+      const nHeaders = state.nr.headers;
+      const pnrKeyN = findKey(nHeaders, "pnr");
+      const orgKeyN = findKey(nHeaders, "orgunit");
+
+      const ratingMap = new Map();
+      state.rating.rows.forEach((row) => {
+        const p = normPNR(row[pnrKeyR]);
+        if (!p) return;
+        const rv = row[ratingKeyR];
+        if (!ratingMap.has(p) || String(rv).trim() !== "") ratingMap.set(p, rv);
+      });
+
+      const nrMap = new Map();
+      state.nr.rows.forEach((row) => {
+        const p = normPNR(row[pnrKeyN]);
+        if (!p) return;
+        nrMap.set(p, row[orgKeyN]);
+      });
+
+      const otaRows = state.booking.rows.filter((row) => normVal(row[bsKeyB]) === "OTA");
+
+      const ratingLookupRows = otaRows.map((row) => {
+        const p = normPNR(row[pnrKeyB]);
+        const rv = ratingMap.has(p) ? ratingMap.get(p) : "";
+        return { ...row, Rating: rv };
+      });
+
+      const unratedRows = otaRows.filter((row) => {
+        const p = normPNR(row[pnrKeyB]);
+        const rv = ratingMap.get(p);
+        return rv === undefined || String(rv).trim() === "";
+      });
+
+      const finalRows = [];
+      unratedRows.forEach((row) => {
+        const p = normPNR(row[pnrKeyB]);
+        const org = nrMap.get(p);
+        const orgNorm = normVal(org);
+        if (ORG_ALLOW.includes(orgNorm)) finalRows.push({ ...row, OrgUnit: org });
+      });
+
+      const ratedCount = otaRows.length - unratedRows.length;
+
+      results = {
+        totalBooking: state.booking.rows.length,
+        otaCount: otaRows.length,
+        ratedCount,
+        unratedCount: unratedRows.length,
+        finalCount: finalRows.length,
+        ratingLookupRows,
+        finalRows,
+      };
+
+      document.getElementById("stat-total").textContent = results.totalBooking.toLocaleString();
+      document.getElementById("stat-ota").textContent = results.otaCount.toLocaleString();
+      document.getElementById("stat-rated").textContent = results.ratedCount.toLocaleString();
+      document.getElementById("stat-unrated").textContent = results.unratedCount.toLocaleString();
+      document.getElementById("stat-final").textContent = results.finalCount.toLocaleString();
+      document.getElementById("download1-count").textContent = results.ratingLookupRows.length.toLocaleString();
+      document.getElementById("download2-count").textContent = results.finalRows.length.toLocaleString();
+      document.getElementById("results-section").classList.add("show");
+
+      // reset trip report when a fresh reconciliation is run
+      tripReport = null;
+      document.getElementById("trip-results").style.display = "none";
+      document.getElementById("trip-error").style.display = "none";
+    } catch (err) {
+      runErrorEl.textContent = "⚠ Something went wrong while matching the sheets. Check that PNR columns contain plain text/number values.";
+      runErrorEl.style.display = "flex";
+    } finally {
+      document.getElementById("run-btn").textContent = "Run reconciliation →";
+      updateRunButton();
+    }
+  }, 30);
+});
+
+document.getElementById("download1-btn").addEventListener("click", () => {
+  if (results) downloadRows(results.ratingLookupRows, "ota_bookings_with_ratings.xlsx");
+});
+document.getElementById("download2-btn").addEventListener("click", () => {
+  if (results) downloadRows(results.finalRows, "unrated_redbus_mmt_pnrs.xlsx");
+});
+
+// ---------- trip report ----------
+document.getElementById("trip-btn").addEventListener("click", () => {
+  const tripErrorEl = document.getElementById("trip-error");
+  tripErrorEl.style.display = "none";
+  if (!results) { tripErrorEl.textContent = "⚠ Run the reconciliation first."; tripErrorEl.style.display = "flex"; return; }
+  if (!state.target.rows || state.target.error) { tripErrorEl.textContent = "⚠ Upload a valid target sheet first."; tripErrorEl.style.display = "flex"; return; }
+
+  document.getElementById("trip-btn").textContent = "Building…";
+  setTimeout(() => {
+    try {
+      const bHeaders = state.booking.headers;
+      const tripKey = findKey(bHeaders, "trip");
+      const pnrKey = findKey(bHeaders, "pnr");
+      if (!tripKey) {
+        tripErrorEl.textContent = '⚠ The booking sheet has no "trip" column to group by.';
+        tripErrorEl.style.display = "flex";
+        return;
+      }
+
+      const srKey = findKey(state.target.headers, "SR.ID");
+      const p0Key = findKey(state.target.headers, "P0July'26");
+      const regionKey = findKey(state.target.headers, "Region");
+      const agentKey = findKey(state.target.headers, "Agent");
+      const p0Label = p0Key || "P0July'26";
+      const regionLabel = regionKey || "Region";
+      const agentLabel = agentKey || "Agent";
+
+      const targetMap = new Map();
+      const targetMapLoose = new Map();
+      if (srKey) {
+        state.target.rows.forEach((row) => {
+          const id = normServiceId(row[srKey]);
+          if (id) targetMap.set(id, row);
+          const loose = digitsOnly(row[srKey]);
+          if (loose && !targetMapLoose.has(loose)) targetMapLoose.set(loose, row);
+        });
+      }
+
+      const groups = new Map();
+      results.finalRows.forEach((row) => {
+        const tripVal = String(row[tripKey] ?? "").trim();
+        if (!tripVal) return;
+        if (!groups.has(tripVal)) groups.set(tripVal, new Set());
+        const p = pnrKey ? normPNR(row[pnrKey]) : "";
+        if (p) groups.get(tripVal).add(p);
+      });
+
+      let naCount = 0;
+      const rows = Array.from(groups.entries()).map(([tripVal, pnrSet]) => {
+        const idMatch = tripVal.match(/^\s*(\d+)/);
+        const serviceId = idMatch ? idMatch[1] : "";
+        let targetRow = serviceId && srKey ? targetMap.get(normServiceId(serviceId)) : undefined;
+        if (!targetRow && serviceId && srKey) targetRow = targetMapLoose.get(digitsOnly(serviceId));
+        const found = !!targetRow;
+        if (!found) naCount += 1;
+        return {
+          "Trip": tripVal,
+          "Service ID": serviceId || "#N/A",
+          "PNR Count": pnrSet.size,
+          [p0Label]: found ? (targetRow[p0Key] ?? "") : "#N/A",
+          [regionLabel]: found ? (targetRow[regionKey] ?? "") : "#N/A",
+          [agentLabel]: found ? (targetRow[agentKey] ?? "") : "#N/A",
+        };
+      });
+      rows.sort((a, b) => b["PNR Count"] - a["PNR Count"]);
+
+      tripReport = {
+        rows,
+        tripCount: rows.length,
+        totalPnr: rows.reduce((sum, r) => sum + r["PNR Count"], 0),
+        naCount,
+      };
+
+      document.getElementById("trip-stat-trips").textContent = tripReport.tripCount.toLocaleString();
+      document.getElementById("trip-stat-pnr").textContent = tripReport.totalPnr.toLocaleString();
+      document.getElementById("trip-stat-na").textContent = tripReport.naCount.toLocaleString();
+      document.getElementById("trip-download-count").textContent = tripReport.rows.length.toLocaleString();
+      document.getElementById("trip-results").style.display = "block";
+      console.log("Trip report generated:", tripReport.tripCount, "trips,", tripReport.naCount, "unmatched (#N/A)");
+    } catch (err) {
+      console.error("Trip report error:", err);
+      tripErrorEl.textContent = "⚠ " + (err && err.message ? err.message : "Something went wrong while building the trip report.");
+      tripErrorEl.style.display = "flex";
+    } finally {
+      document.getElementById("trip-btn").textContent = "Generate trip report →";
+    }
+  }, 30);
+});
+
+document.getElementById("trip-download-btn").addEventListener("click", () => {
+  if (tripReport) downloadRows(tripReport.rows, "trip_level_pnr_report.xlsx");
+});
+
+// ---------- reset ----------
+document.getElementById("reset-btn").addEventListener("click", () => {
+  Object.keys(state).forEach((key) => {
+    state[key] = { file: null, rows: null, headers: null, meta: null, error: null };
+    const dz = document.getElementById("dropzone-" + key);
+    dz.classList.remove("err");
+    document.getElementById("marker-" + key).classList.remove("err", "done");
+    document.getElementById("marker-" + key).innerHTML = stageDefs[key].index;
+    document.getElementById("icon-" + key).textContent = "⬆";
+    document.getElementById("file-info-" + key).style.display = "none";
+    document.getElementById("file-" + key).value = "";
+  });
+  results = null;
+  tripReport = null;
+  document.getElementById("results-section").classList.remove("show");
+  document.getElementById("trip-results").style.display = "none";
+  document.getElementById("run-error").style.display = "none";
+  document.getElementById("trip-error").style.display = "none";
+  updateRunButton();
+});</script>
+</body>
+</html>
